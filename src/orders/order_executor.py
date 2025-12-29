@@ -267,6 +267,68 @@ def send_market_order(
     )
 
 
+def close_position_by_trade_id(trade_id: str, units: Optional[int] = None) -> Dict[str, Any]:
+    """
+    Close a specific position by its TradeID.
+
+    Parameters
+    ----------
+    trade_id : str
+        The broker trade ID to close.
+    units : int, optional
+        Number of units to close. If None, closes the entire position.
+
+    Returns
+    -------
+    Dict[str, Any]
+        The broker's response to the close request.
+    """
+    client = get_broker_client()
+    logger.info(f"Closing trade {trade_id} (units={units}) in env={client.config.env}")
+    response = client.close_trade(trade_id=trade_id, units=units)
+    logger.info(f"Close response: {response}")
+    return response
+
+
+def update_position_sl_by_trade_id(trade_id: str, instrument: str, sl_price: Decimal) -> Dict[str, Any]:
+    """
+    Update a position's Stop Loss by TradeID.
+
+    Parameters
+    ----------
+    trade_id : str
+        The broker trade ID to update.
+    instrument : str
+        The instrument (e.g., "EUR_USD").
+    sl_price : Decimal
+        The new Stop Loss price.
+
+    Returns
+    -------
+    Dict[str, Any]
+        The broker's response to the update request.
+    """
+    client = get_broker_client()
+    logger.info(f"Updating SL for trade {trade_id} to {sl_price} in env={client.config.env}")
+    
+    # First, verify the trade exists and is open
+    try:
+        trade_info = client.get_trade(trade_id)
+        trade_data = trade_info.get("trade", {})
+        state = trade_data.get("state", "").upper()
+        if state != "OPEN":
+            logger.warning(f"Trade {trade_id} is not open (state: {state}). Cannot update SL.")
+            raise ValueError(f"Trade {trade_id} is not open")
+        logger.info(f"Trade {trade_id} is open, proceeding with SL update.")
+    except Exception as e:
+        logger.error(f"Failed to verify trade {trade_id}: {e}")
+        raise
+    
+    response = client.update_trade(trade_id=trade_id, instrument=instrument, sl_price=sl_price)
+    logger.info(f"Update SL response: {response}")
+    return response
+
+
 # ----------------------------------------------------------------------
 # BROKER SYNC (open & closed states)
 # ----------------------------------------------------------------------

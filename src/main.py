@@ -17,7 +17,7 @@ from signals import open_signal_registry
 
 from database.db_general import get_pg_conn
 from public_module import config_data
-from orders.order_executor import update_account_summary
+from orders.order_executor import close_position_by_trade_id, update_position_sl_by_trade_id
 from indicators.atr_15m import ATR_Update, get_latest_atr_15m
 
 Candle_SUBJECT = "candles.>"   
@@ -199,7 +199,10 @@ async def main():
                             logger.info(f"Candle for {symbol} {timeframe}, close_time:{candle_data['close_time']} appended to buffer.")
 
                             open_sig_registry.flush_distance_metrics(DB_Conn)
-
+                            open_sig_registry.bootstrap_from_db(DB_Conn) 
+                            open_count = open_sig_registry.get_count() 
+                            logger.info( json.dumps({ "EventCode": 0, "Message": f"open_sig_registry initialized. open_signals={open_count}" }) )
+                            
                         #========== Main section, getting the candles we need ====================================
                         
                         await msg.ack()

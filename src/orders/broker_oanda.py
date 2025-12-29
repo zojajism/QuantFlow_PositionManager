@@ -198,8 +198,77 @@ class BrokerClient:
         path = f"/accounts/{self.config.account_id}/trades/{trade_id}"
         return self._get(path)
 
+    def close_trade(self, trade_id: str, units: Optional[int] = None) -> Dict[str, Any]:
+        """
+        Close a trade by ID.
 
-# ----------------------------------------------------------------------
+        Parameters
+        ----------
+        trade_id : str
+            The trade ID to close.
+        units : int, optional
+            Number of units to close. If None, closes the entire trade.
+
+        Returns
+        -------
+        Dict[str, Any]
+            Parsed JSON response from OANDA.
+        """
+        path = f"/accounts/{self.config.account_id}/trades/{trade_id}/close"
+        body: Dict[str, Any] = {}
+        if units is not None:
+            body["units"] = str(units)
+        # OANDA uses PUT for close
+        url = f"{self.config.base_url}{path}"
+        resp = requests.put(url, headers=self._headers(), json=body, timeout=10)
+        resp.raise_for_status()
+        return resp.json()
+
+    def update_trade(
+            self,
+            trade_id: str,
+            instrument: str,
+            sl_price: Optional[Decimal] = None,
+            tp_price: Optional[Decimal] = None,
+        ) -> Dict[str, Any]:
+
+        if sl_price is None and tp_price is None:
+            raise ValueError("At least one of sl_price or tp_price must be provided.")
+
+        # IMPORTANT: this is the correct endpoint for SL/TP updates
+        path = f"/accounts/{self.config.account_id}/trades/{trade_id}/orders"
+
+        body: Dict[str, Any] = {}
+
+        if sl_price is not None:
+            body["stopLoss"] = {
+                "price": self._fmt_price(instrument, sl_price),
+                "timeInForce": "GTC",
+            }
+
+        if tp_price is not None:
+            body["takeProfit"] = {
+                "price": self._fmt_price(instrument, tp_price),
+                "timeInForce": "GTC",
+            }
+
+        url = f"{self.config.base_url}{path}"
+        logger.info(f"Updating trade {trade_id} dependent orders with body: {body}")
+
+        resp = requests.put(url, headers=self._headers(), json=body, timeout=30)
+        logger.info(f"Update trade response status: {resp.status_code}")
+
+        # If it fails, log the response body (very useful for OANDA errors)
+        if not resp.ok:
+            try:
+                logger.error(f"OANDA error body: {resp.text}")
+            except Exception:
+                pass
+
+        resp.raise_for_status()
+        return resp.json()
+
+    
 # Helper: build client from environment variables
 # ----------------------------------------------------------------------
 def create_client_from_env() -> BrokerClient:

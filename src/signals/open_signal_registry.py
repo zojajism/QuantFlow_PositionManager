@@ -77,7 +77,6 @@ class OpenSignal:
     order_status: str = "none"               # none/pending/open/closed/...
     exec_latency_ms: Optional[int] = None
 
-
 class OpenSignalRegistry:
     """
     In-memory registry of open signals that we want to track with ticks.
@@ -133,6 +132,9 @@ class OpenSignalRegistry:
         loaded = 0
 
         with self._lock:
+
+            self._signals_by_symbol.clear()  # Clear existing signals before loading from DB
+
             for row in rows:
                 sig = OpenSignal(
                     exchange=str(row["exchange"]),
@@ -289,7 +291,8 @@ class OpenSignalRegistry:
 
                 # Update distance metrics even if not hit
                 self._update_distance_metrics(sig=sig, price_to_check=price_to_check)
-                
+
+                '''
                 if not hit:
                     survivors.append(sig)
                     continue
@@ -301,14 +304,16 @@ class OpenSignalRegistry:
                     hit_time=now,
                     conn=conn,
                 )
-
+                '''
+            '''
             # Update survivors list for this symbol
             if survivors:
                 self._signals_by_symbol[symbol] = survivors
             else:
                 # No more open signals on this symbol
                 self._signals_by_symbol.pop(symbol, None)
-
+            '''
+            
     def flush_distance_metrics(self, conn: psycopg.Connection) -> int:
         """
         Persist nearest/farthest pips metrics + last_tick_price to DB for signals that changed.
@@ -328,7 +333,7 @@ class OpenSignalRegistry:
                 for sig in signals:
                     if not sig.dirty:
                         continue
-                    if sig.nearest_pips_to_target is None or sig.farthest_pips_to_target is None:
+                    if sig.nearest_pips_to_target is None and sig.farthest_pips_to_target is None:
                         continue
                     to_flush.append((sig, sig.nearest_pips_to_target, sig.farthest_pips_to_target, sig.last_tick_price))
                     # Mark clean now; if DB fails, we'll mark dirty again on next ticks.
@@ -393,8 +398,12 @@ class OpenSignalRegistry:
         Update nearest/farthest absolute distance to target in pips.
         Also marks signal dirty if values change.
         """
+        #print(f"[DEBUG] _update_distance_metrics: sig:{sig.symbol}, price_to_check:{price_to_check}, target:{sig.target_price}, entry:{sig.actual_entry_price}, side:{sig.side}, farthest:{sig.farthest_pips_to_target}, nearest:{sig.nearest_pips_to_target}")
+
         pip = _pip_size(sig.symbol)
         result = _pips_distance(price=price_to_check, target=sig.target_price, pip=pip, entry_price=sig.actual_entry_price, side = sig.side)
+        #print(f"[DEBUG] _update_distance_metrics: result:{result}")
+
         if result is None:
             return
         
