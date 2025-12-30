@@ -13,9 +13,13 @@ import psycopg
 
 from telegram_notifier import notify_telegram, ChatType
 
+from orders.sl_manager import calculate_trailing_sl
+
 from database.db_signals import fetch_open_signals_for_open_registry
 
 import logging
+
+from orders.order_executor import close_position_by_trade_id, update_position_sl_by_trade_id
 
 logger = logging.getLogger(__name__)
 
@@ -31,17 +35,29 @@ def _to_decimal(x: Any) -> Decimal:
     return Decimal(str(x))
 
 
+def _price_direction(price: Decimal, target: Decimal, entry_price: Decimal, side: str) -> str:
+    if side.lower() == "buy":
+        if price > entry_price and price <= target:
+            return "same"
+        else:
+            return "opposite"
+    elif side.lower() == "sell":
+        if price < entry_price and price >= target:
+            return "same"
+        else:
+            return "opposite"
+        
 def _pips_distance(price: Decimal, target: Decimal, pip: Decimal, entry_price: Decimal, side: str) -> tuple[Decimal, str]:
     if side == "buy":
         if price > entry_price and price < target: # in positive direction but not yet reached target
             return (target - price) / pip, "same_direction"
         elif price < entry_price: # moved against entry
-            return (entry_price - price) / pip, "oposite_direction"
+            return (entry_price - price) / pip, "opposite_direction"
     elif side == "sell":
         if price < entry_price and price > target: # in positive direction but not yet reached target
             return (price - target) / pip, "same_direction"
         elif price > entry_price: # moved against entry
-            return (price - entry_price) / pip, "oposite_direction"
+            return (price - entry_price) / pip, "opposite_direction"
 
 
 @dataclass
@@ -62,6 +78,9 @@ class OpenSignal:
 
     # Last tick price used for this signal (BUY->bid, SELL->ask)
     last_tick_price: Optional[Decimal] = None
+
+    # Trailing Stop Loss price
+    trailing_sl_price: Optional[Decimal] = None
 
     # Marks whether metrics changed and should be flushed to DB
     dirty: bool = False
@@ -149,6 +168,7 @@ class OpenSignalRegistry:
                     nearest_pips_to_target=_to_decimal(row["nearest_pips_to_target"]) if row.get("nearest_pips_to_target") is not None else None,  # type: ignore
                     farthest_pips_to_target=_to_decimal(row["farthest_pips_to_target"]) if row.get("farthest_pips_to_target") is not None else None,  # type: ignore
                     last_tick_price=_to_decimal(row["last_tick_price"]) if row.get("last_tick_price") is not None else None,  # type: ignore
+                    trailing_sl_price=_to_decimal(row["trailing_sl_price"]) if row.get("trailing_sl_price") is not None else None,  # type: ignore
                     order_env=row.get("order_env"),
                     broker_order_id=row.get("broker_order_id"),
                     broker_trade_id=row.get("broker_trade_id"),
@@ -292,6 +312,12 @@ class OpenSignalRegistry:
                 # Update distance metrics even if not hit
                 self._update_distance_metrics(sig=sig, price_to_check=price_to_check)
 
+                # Manage trailing SL if applicable
+                self._manage_trailing_sl(sig=sig, current_price=price_to_check)
+
+                # Apply trailing SL if applicable
+                self._apply_trailing_sl(sig=sig, current_price=price_to_check)
+
                 '''
                 if not hit:
                     survivors.append(sig)
@@ -313,7 +339,7 @@ class OpenSignalRegistry:
                 # No more open signals on this symbol
                 self._signals_by_symbol.pop(symbol, None)
             '''
-            
+
     def flush_distance_metrics(self, conn: psycopg.Connection) -> int:
         """
         Persist nearest/farthest pips metrics + last_tick_price to DB for signals that changed.
@@ -335,7 +361,7 @@ class OpenSignalRegistry:
                         continue
                     if sig.nearest_pips_to_target is None and sig.farthest_pips_to_target is None:
                         continue
-                    to_flush.append((sig, sig.nearest_pips_to_target, sig.farthest_pips_to_target, sig.last_tick_price))
+                    to_flush.append((sig, sig.nearest_pips_to_target, sig.farthest_pips_to_target, sig.last_tick_price, sig.trailing_sl_price))
                     # Mark clean now; if DB fails, we'll mark dirty again on next ticks.
                     sig.dirty = False
 
@@ -350,7 +376,8 @@ class OpenSignalRegistry:
                SET nearest_pips_to_target = %s,
                    farthest_pips_to_target = %s,
                    last_tick_price = %s,
-                   tick_update_time = NOW()
+                   tick_update_time = NOW(),
+                   trailing_sl_price = %s
              WHERE signal_symbol = %s
                AND position_type = %s
                AND event_time    = %s
@@ -362,13 +389,14 @@ class OpenSignalRegistry:
         updated = 0
         try:
             with conn.cursor() as cur:
-                for sig, nearest, farthest, last_tick_price in to_flush:
+                for sig, nearest, farthest, last_tick_price, trailing_sl_price in to_flush:
                     cur.execute(
                         sql,
                         (
                             nearest,
                             farthest,
                             last_tick_price,
+                            trailing_sl_price,
                             sig.symbol,
                             sig.side,
                             sig.event_time,
@@ -391,7 +419,56 @@ class OpenSignalRegistry:
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------
+    
+    def _apply_trailing_sl(self, *, sig: OpenSignal, current_price: Decimal) -> None:
+        
+        sl_activated = False
 
+        if sig.trailing_sl_price is not None:
+            if sig.side.lower() == "buy" and  current_price <= sig.trailing_sl_price:
+                close_position_by_trade_id(trade_id=sig.broker_trade_id)
+                sl_activated = True        
+            if sig.side.lower() == "sell" and  current_price >= sig.trailing_sl_price:
+                close_position_by_trade_id(trade_id=sig.broker_trade_id)
+                sl_activated = True        
+
+        if sl_activated:
+            logger.info(f"Applied trailing SL for {sig.side} signal: symbol:{sig.symbol}, trade_id:{sig.broker_trade_id}, sl_price:{sig.trailing_sl_price}, current_price:{current_price}")
+            msg = (
+                    "🥑 Applied trailing SL for {sig.side} signal\n\n"
+                    f"Symbol:         {sig.symbol}\n"
+                    f"Side:              {sig.side}\n"
+                    f"trade_id:       {sig.broker_trade_id}\n\n"
+                    f"sl_price:             {sig.trailing_sl_price.quantize(Decimal('0.00001'))}\n"
+                    f"current_price:  {current_price}\n"
+                )
+            notify_telegram(msg, ChatType.INFO)
+            
+        return
+    
+    def _manage_trailing_sl(self, *, sig: OpenSignal, current_price: Decimal) -> None:
+        
+        try:
+            trailing_sl = None
+
+            if _price_direction(price=current_price, target=sig.actual_tp_price, entry_price=sig.actual_entry_price, side=sig.side).lower() == "same":
+                trailing_sl = calculate_trailing_sl(
+                    entry_price=sig.actual_entry_price,
+                    tp_price=sig.actual_tp_price,
+                    order_side=sig.side,
+                    current_price=current_price,
+                    symbol=sig.symbol, # only for info and logging
+                    broker_trade_id=sig.broker_trade_id, # only for info and logging
+                )
+
+            if trailing_sl is not None and ( (sig.trailing_sl_price is None) or (sig.side.lower() == "buy" and trailing_sl > sig.trailing_sl_price) or (sig.side.lower() == "sell" and trailing_sl < sig.trailing_sl_price)) :
+                sig.trailing_sl_price = trailing_sl
+                sig.dirty = True
+        except Exception as e:
+            print(f"[WARN] manage_trailing_sl failed: {e}")    
+
+        return
+        
 
     def _update_distance_metrics(self, *, sig: OpenSignal, price_to_check: Decimal) -> None:
         """
@@ -401,7 +478,7 @@ class OpenSignalRegistry:
         #print(f"[DEBUG] _update_distance_metrics: sig:{sig.symbol}, price_to_check:{price_to_check}, target:{sig.target_price}, entry:{sig.actual_entry_price}, side:{sig.side}, farthest:{sig.farthest_pips_to_target}, nearest:{sig.nearest_pips_to_target}")
 
         pip = _pip_size(sig.symbol)
-        result = _pips_distance(price=price_to_check, target=sig.target_price, pip=pip, entry_price=sig.actual_entry_price, side = sig.side)
+        result = _pips_distance(price=price_to_check, target=sig.actual_tp_price, pip=pip, entry_price=sig.actual_entry_price, side = sig.side)
         #print(f"[DEBUG] _update_distance_metrics: result:{result}")
 
         if result is None:
@@ -409,7 +486,7 @@ class OpenSignalRegistry:
         
         dist_pips, direction = result
 
-        if direction == "oposite_direction" and (sig.farthest_pips_to_target is None or dist_pips > sig.farthest_pips_to_target):
+        if direction == "opposite_direction" and (sig.farthest_pips_to_target is None or dist_pips > sig.farthest_pips_to_target):
             sig.farthest_pips_to_target = dist_pips
             sig.dirty = True
             return

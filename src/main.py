@@ -19,6 +19,7 @@ from database.db_general import get_pg_conn
 from public_module import config_data
 from orders.order_executor import close_position_by_trade_id, update_position_sl_by_trade_id
 from indicators.atr_15m import ATR_Update, get_latest_atr_15m
+from orders.sl_manager import load_sl_configs
 
 Candle_SUBJECT = "candles.>"   
 Candle_STREAM = "STREAM_CANDLES"   
@@ -55,6 +56,9 @@ async def main():
                         })
                 )
         notify_telegram(f"❇️ QuantFlow_PositionManager started....", ChatType.ALERT)
+        
+        # Load SL configurations from database
+        load_sl_configs()
         
         symbols = [str(s) for s in config_data.get("symbols", [])]
         timeframes = [str(t) for t in config_data.get("timeframes", [])]
@@ -203,6 +207,8 @@ async def main():
                             open_count = open_sig_registry.get_count() 
                             logger.info( json.dumps({ "EventCode": 0, "Message": f"open_sig_registry initialized. open_signals={open_count}" }) )
                             
+                            # Load SL configurations from database
+                            load_sl_configs()                          
                         #========== Main section, getting the candles we need ====================================
                         
                         await msg.ack()

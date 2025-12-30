@@ -137,4 +137,33 @@ def get_last_bios_from_db(exchange: str, symbol: str, timeframe: str) -> str:
 
     for row in reversed(rows):
       return row[0]
+
+
+def fetch_sl_config() -> List[Dict[str, Any]]:
+    """
+    Fetch all SL configuration records from the sl_config table.
+    
+    Assumes table has columns: id, distance_percentage, sl_percentage
+    - distance_percentage: how far price has moved towards TP (as % of distance from entry to TP)
+    - sl_percentage: SL level as % from entry price
+    
+    Returns list of dicts with the config data.
+    """
+    sql = """
+        SELECT id, distance_percentage, sl_percentage
+        FROM sl_config
+        ORDER BY distance_percentage ASC
+    """
+    with get_pg_conn() as conn, conn.cursor() as cur:
+        cur.execute(sql)
+        rows = cur.fetchall()
+    
+    configs = []
+    for row in rows:
+        configs.append({
+            "id": row[0],
+            "distance_percentage": float(row[1]),
+            "sl_percentage": float(row[2])
+        })
+    return configs
     
