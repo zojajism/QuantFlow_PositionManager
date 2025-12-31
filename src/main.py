@@ -8,6 +8,7 @@ from logger_config import setup_logger
 from NATS_setup import ensure_streams_from_yaml
 import buffers.buffer_initializer as buffers
 from buffers.candle_buffer import Keys
+from indicators.ema import calc_ema_from_candles
 from telegram_notifier import notify_telegram, ChatType, start_telegram_notifier, close_telegram_notifier, ChatType
 from dotenv import load_dotenv
 from pathlib import Path
@@ -17,9 +18,9 @@ from signals import open_signal_registry
 
 from database.db_general import get_pg_conn
 from public_module import config_data
-from orders.order_executor import close_position_by_trade_id, update_position_sl_by_trade_id
-from indicators.atr_15m import ATR_Update, get_latest_atr_15m
 from orders.sl_manager import load_sl_configs
+
+import public_module
 
 Candle_SUBJECT = "candles.>"   
 Candle_STREAM = "STREAM_CANDLES"   
@@ -202,13 +203,26 @@ async def main():
                             
                             logger.info(f"Candle for {symbol} {timeframe}, close_time:{candle_data['close_time']} appended to buffer.")
 
-                            open_sig_registry.flush_distance_metrics(DB_Conn)
-                            open_sig_registry.bootstrap_from_db(DB_Conn) 
-                            open_count = open_sig_registry.get_count() 
-                            logger.info( json.dumps({ "EventCode": 0, "Message": f"open_sig_registry initialized. open_signals={open_count}" }) )
+                            if timeframe == "1m":
+                                open_sig_registry.flush_distance_metrics(DB_Conn)
+                                open_sig_registry.bootstrap_from_db(DB_Conn) 
+                                open_count = open_sig_registry.get_count() 
+                                logger.info( json.dumps({ "EventCode": 0, "Message": f"open_sig_registry initialized. open_signals={open_count}" }) )
+                                
+                                load_sl_configs()                          
                             
-                            # Load SL configurations from database
-                            load_sl_configs()                          
+                            if timeframe == "1m" or timeframe == "15m":
+                                try:
+
+                                    dq = buffers.CANDLE_BUFFER.get_or_create(key)
+
+                                    ema_fast = calc_ema_from_candles(dq, public_module.EMA_FAST)
+                                    ema_slow = calc_ema_from_candles(dq, public_module.EMA_SLOW)
+                                    logger.info(f"Calculated EMAs for {symbol} {timeframe}: EMA_{public_module.EMA_FAST} = {ema_fast}, EMA_{public_module.EMA_SLOW} = {ema_slow}")
+
+                                except Exception as e:
+                                    logger.error(f"Error calculating EMAs for {symbol} {timeframe}: {e}")
+
                         #========== Main section, getting the candles we need ====================================
                         
                         await msg.ack()

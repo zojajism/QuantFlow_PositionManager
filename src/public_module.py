@@ -27,6 +27,8 @@ FILTER_MARKET_TIME= False
 
 APPLY_SL= False
 
+EMA_FAST: 20
+EMA_SLOW: 50
 
 # Type:
 #   correlation_cache[timeframe][(sym_a, sym_b)] = corr_value
@@ -63,6 +65,8 @@ FILTER_MARKET_TIME = config_data.get("FILTER_MARKET_TIME", False)
 
 APPLY_SL = config_data.get("APPLY_SL", False)
 
+EMA_FAST = config_data.get("EMA_FAST", 20)
+EMA_SLOW = config_data.get("EMA_SLOW", 50)
 
 TP_FIX_DISTANCE = Decimal(str(config_data.get("TP_FIX_DISTANCE", "2.0")))
 TP_TARGET_FOR_FIX_DISTANCE = Decimal(str(config_data.get("TP_TARGET_FOR_FIX_DISTANCE", "20.0")))

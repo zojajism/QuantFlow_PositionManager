@@ -41,7 +41,7 @@ class SLManager:
         current_price: Decimal,
         symbol: str = "",
         broker_trade_id: str = ""
-    ) -> Optional[Decimal]:
+    ) -> tuple[Optional[Decimal], Optional[Decimal]]:
         """
         Calculate the trailing SL price based on current price position.
         
@@ -52,28 +52,28 @@ class SLManager:
         """
         if not self.configs:
             logger.warning("No SL configs loaded")
-            return None
+            return None, None
         
         # Calculate total distance from entry to TP
         if order_side.lower() == "buy":
             if current_price <= entry_price:
                 # Price hasn't moved in profit direction yet
-                return None
+                return None, None
             total_distance = tp_price - entry_price
             current_distance = current_price - entry_price
         elif order_side.lower() == "sell":
             if current_price >= entry_price:
                 # Price hasn't moved in profit direction yet
-                return None
+                return None, None
             total_distance = entry_price - tp_price
             current_distance = entry_price - current_price
         else:
             logger.error(f"Invalid order_side: {order_side}")
-            return None
+            return None, None
         
         if total_distance <= 0:
             logger.warning("Invalid TP price relative to entry")
-            return None
+            return None, None
         
         # Calculate percentage of distance covered
         distance_pct = (current_distance / total_distance) * 100
@@ -88,7 +88,7 @@ class SLManager:
         
         if not applicable_config:
             # No level reached yet
-            return None
+            return None, None
         
         # Calculate SL price
         sl_pct = Decimal(str(applicable_config["sl_percentage"])) / Decimal('100')
@@ -106,7 +106,7 @@ class SLManager:
             f"level={applicable_config['distance_percentage']}%, "
             f"sl_pct={applicable_config['sl_percentage']}%, sl_price={sl_price}"
         )
-        return sl_price
+        return sl_price, applicable_config['sl_percentage']
 
 
 # Global instance
@@ -138,7 +138,7 @@ def calculate_trailing_sl(
     current_price: Decimal,
     symbol: str = "",
     broker_trade_id: str = ""
-) -> Optional[Decimal]:
+) -> tuple[Optional[Decimal]:, Optional[Decimal]]:
     """
     Convenience function to calculate trailing SL using the global manager.
     """

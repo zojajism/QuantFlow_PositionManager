@@ -117,7 +117,8 @@ def fetch_open_signals_for_open_registry(conn: psycopg.Connection) -> List[Dict[
             exec_latency_ms,
             nearest_pips_to_target,
             farthest_pips_to_target,
-            trailing_sl_price
+            trailing_sl_price,
+            trailing_sl_tp_percent
         FROM public.signals
         WHERE order_sent = true
           AND order_status = 'open'
@@ -145,7 +146,8 @@ def fetch_open_signals_for_open_registry(conn: psycopg.Connection) -> List[Dict[
             exec_latency_ms,
             nearest_pips_to_target,
             farthest_pips_to_target,
-            trailing_sl_price
+            trailing_sl_price,
+            trailing_sl_tp_percent
         ) in cur.fetchall():
             rows.append(
                 {
@@ -174,6 +176,7 @@ def fetch_open_signals_for_open_registry(conn: psycopg.Connection) -> List[Dict[
                     "nearest_pips_to_target": nearest_pips_to_target,
                     "farthest_pips_to_target": farthest_pips_to_target,
                     "trailing_sl_price": trailing_sl_price,
+                    "trailing_sl_tp_percent": trailing_sl_tp_percent
                 }
             )
 

@@ -17,7 +17,7 @@ def setup_logger():
 
         
     log_dir.mkdir(parents=True, exist_ok=True)
-    log_file = log_dir / "QuantFlow_FX_DecEng_1m.log"
+    log_file = log_dir / "QuantFlow_PositionManager.log"
 
     file_handler = TimedRotatingFileHandler(
         str(log_file),
@@ -45,7 +45,7 @@ def setup_logger():
         handlers=handlers
     )
 
-    logger = logging.getLogger("QuantFlow_FX_DecEng_1m")
+    logger = logging.getLogger("QuantFlow_PositionManager")
     logger.info(
                 json.dumps({
                         "EventCode": 0,

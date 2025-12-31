@@ -81,6 +81,8 @@ class OpenSignal:
 
     # Trailing Stop Loss price
     trailing_sl_price: Optional[Decimal] = None
+    trailing_sl_tp_percent: Optional[Decimal] = None
+    sl_activated: Optional[bool] = False
 
     # Marks whether metrics changed and should be flushed to DB
     dirty: bool = False
@@ -169,6 +171,7 @@ class OpenSignalRegistry:
                     farthest_pips_to_target=_to_decimal(row["farthest_pips_to_target"]) if row.get("farthest_pips_to_target") is not None else None,  # type: ignore
                     last_tick_price=_to_decimal(row["last_tick_price"]) if row.get("last_tick_price") is not None else None,  # type: ignore
                     trailing_sl_price=_to_decimal(row["trailing_sl_price"]) if row.get("trailing_sl_price") is not None else None,  # type: ignore
+                    trailing_sl_tp_percent=_to_decimal(row["trailing_sl_tp_percent"]) if row.get("trailing_sl_tp_percent") is not None else None,  # type: ignore
                     order_env=row.get("order_env"),
                     broker_order_id=row.get("broker_order_id"),
                     broker_trade_id=row.get("broker_trade_id"),
@@ -361,7 +364,7 @@ class OpenSignalRegistry:
                         continue
                     if sig.nearest_pips_to_target is None and sig.farthest_pips_to_target is None:
                         continue
-                    to_flush.append((sig, sig.nearest_pips_to_target, sig.farthest_pips_to_target, sig.last_tick_price, sig.trailing_sl_price))
+                    to_flush.append((sig, sig.nearest_pips_to_target, sig.farthest_pips_to_target, sig.last_tick_price, sig.trailing_sl_price, sig.trailing_sl_tp_percent))
                     # Mark clean now; if DB fails, we'll mark dirty again on next ticks.
                     sig.dirty = False
 
@@ -377,7 +380,8 @@ class OpenSignalRegistry:
                    farthest_pips_to_target = %s,
                    last_tick_price = %s,
                    tick_update_time = NOW(),
-                   trailing_sl_price = %s
+                   trailing_sl_price = %s,
+                   trailing_sl_tp_percent = %s
              WHERE signal_symbol = %s
                AND position_type = %s
                AND event_time    = %s
@@ -389,7 +393,7 @@ class OpenSignalRegistry:
         updated = 0
         try:
             with conn.cursor() as cur:
-                for sig, nearest, farthest, last_tick_price, trailing_sl_price in to_flush:
+                for sig, nearest, farthest, last_tick_price, trailing_sl_price, trailing_sl_tp_percent in to_flush:
                     cur.execute(
                         sql,
                         (
@@ -397,6 +401,7 @@ class OpenSignalRegistry:
                             farthest,
                             last_tick_price,
                             trailing_sl_price,
+                            trailing_sl_tp_percent,
                             sig.symbol,
                             sig.side,
                             sig.event_time,
@@ -422,24 +427,26 @@ class OpenSignalRegistry:
     
     def _apply_trailing_sl(self, *, sig: OpenSignal, current_price: Decimal) -> None:
         
-        sl_activated = False
+        if sig.sl_activated:
+            return
 
         if sig.trailing_sl_price is not None:
             if sig.side.lower() == "buy" and  current_price <= sig.trailing_sl_price:
                 close_position_by_trade_id(trade_id=sig.broker_trade_id)
-                sl_activated = True        
+                sig.sl_activated = True        
             if sig.side.lower() == "sell" and  current_price >= sig.trailing_sl_price:
                 close_position_by_trade_id(trade_id=sig.broker_trade_id)
-                sl_activated = True        
+                sig.sl_activated = True        
 
-        if sl_activated:
+        if sig.sl_activated:
             logger.info(f"Applied trailing SL for {sig.side} signal: symbol:{sig.symbol}, trade_id:{sig.broker_trade_id}, sl_price:{sig.trailing_sl_price}, current_price:{current_price}")
             msg = (
-                    "🥑 Applied trailing SL for {sig.side} signal\n\n"
+                    f"🥑 Trailing SL Activated\n\n"
                     f"Symbol:         {sig.symbol}\n"
                     f"Side:              {sig.side}\n"
                     f"trade_id:       {sig.broker_trade_id}\n\n"
-                    f"sl_price:             {sig.trailing_sl_price.quantize(Decimal('0.00001'))}\n"
+                    f"tp_percentage:       % {round(sig.trailing_sl_tp_percent,2)}\n\n"
+                    f"sl_price:              {sig.trailing_sl_price.quantize(Decimal('0.00001'))}\n"
                     f"current_price:  {current_price}\n"
                 )
             notify_telegram(msg, ChatType.INFO)
@@ -452,7 +459,7 @@ class OpenSignalRegistry:
             trailing_sl = None
 
             if _price_direction(price=current_price, target=sig.actual_tp_price, entry_price=sig.actual_entry_price, side=sig.side).lower() == "same":
-                trailing_sl = calculate_trailing_sl(
+                trailing_sl, sl_percentage = calculate_trailing_sl(
                     entry_price=sig.actual_entry_price,
                     tp_price=sig.actual_tp_price,
                     order_side=sig.side,
@@ -463,6 +470,8 @@ class OpenSignalRegistry:
 
             if trailing_sl is not None and ( (sig.trailing_sl_price is None) or (sig.side.lower() == "buy" and trailing_sl > sig.trailing_sl_price) or (sig.side.lower() == "sell" and trailing_sl < sig.trailing_sl_price)) :
                 sig.trailing_sl_price = trailing_sl
+                sig.trailing_sl_tp_percent = sl_percentage
+
                 sig.dirty = True
         except Exception as e:
             print(f"[WARN] manage_trailing_sl failed: {e}")    
