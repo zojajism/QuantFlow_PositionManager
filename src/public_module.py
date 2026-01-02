@@ -30,6 +30,8 @@ APPLY_SL= False
 EMA_FAST: 20
 EMA_SLOW: 50
 
+EMA_STATE_BUFFER_SIZE: 100
+
 # Type:
 #   correlation_cache[timeframe][(sym_a, sym_b)] = corr_value
 # where (sym_a, sym_b) is an unordered / canonical pair (sorted tuple).
@@ -68,6 +70,8 @@ APPLY_SL = config_data.get("APPLY_SL", False)
 EMA_FAST = config_data.get("EMA_FAST", 20)
 EMA_SLOW = config_data.get("EMA_SLOW", 50)
 
+EMA_STATE_BUFFER_SIZE = config_data.get("EMA_STATE_BUFFER_SIZE", 100)
+
 TP_FIX_DISTANCE = Decimal(str(config_data.get("TP_FIX_DISTANCE", "2.0")))
 TP_TARGET_FOR_FIX_DISTANCE = Decimal(str(config_data.get("TP_TARGET_FOR_FIX_DISTANCE", "20.0")))
 
@@ -94,6 +98,12 @@ for item in raw_list:
 
     margin_dict[key] = float(value)
 #=======================================================================
+
+def _pip_size(symbol: str) -> Decimal:
+    s = symbol.upper()
+    if "JPY" in s or "DXY" in s:
+        return Decimal("0.01")
+    return Decimal("0.0001")
 
 def check_available_required_margine(symbol: str, trade_unit: int) -> tuple[bool, float]:
     margine = margin_dict.get(symbol)

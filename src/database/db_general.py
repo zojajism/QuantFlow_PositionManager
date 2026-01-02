@@ -1,4 +1,6 @@
 import os
+import decimal
+import logging
 from typing import List, Dict, Any, Optional
 from dotenv import load_dotenv
 import psycopg
@@ -141,12 +143,6 @@ def get_last_bios_from_db(exchange: str, symbol: str, timeframe: str) -> str:
 
 def fetch_sl_config() -> List[Dict[str, Any]]:
     """
-    Fetch all SL configuration records from the sl_config table.
-    
-    Assumes table has columns: id, distance_percentage, sl_percentage
-    - distance_percentage: how far price has moved towards TP (as % of distance from entry to TP)
-    - sl_percentage: SL level as % from entry price
-    
     Returns list of dicts with the config data.
     """
     sql = """
@@ -166,4 +162,66 @@ def fetch_sl_config() -> List[Dict[str, Any]]:
             "sl_percentage": float(row[2])
         })
     return configs
+
+
+def get_ema_states_from_db(exchange: str, symbol: str, timeframe: str, limit: int) -> List[Dict[str, Any]]:
+    """
+    Fetch latest `limit` ema_states in DESC order, then return ASC list of dicts.
+    """
+    sql = """
+        SELECT
+            exchange,
+            symbol,
+            timeframe,
+            close_time,
+            ema_slow,
+            ema_fast,
+            bios,
+            trend,
+            flipped,
+            candle_open,
+            candle_close,
+            ema_distance
+        FROM ema_state
+        WHERE exchange = %s
+          AND symbol   = %s
+          AND timeframe= %s
+        ORDER BY close_time DESC
+        LIMIT %s
+    """
+
+    with get_pg_conn() as conn, conn.cursor() as cur:
+        cur.execute(sql, (exchange, symbol, timeframe, limit))
+        rows = cur.fetchall()
     
+    # Convert to list of dicts in ASC order
+    ema_states_list = [
+        {
+            "exchange": row[0],
+            "symbol": row[1],
+            "timeframe": row[2],
+            "close_time": row[3],
+            "ema_slow": decimal.Decimal(row[4]) if row[4] is not None else None,
+            "ema_fast": decimal.Decimal(row[5]) if row[5] is not None else None,
+            "bios": row[6],
+            "trend": row[7],
+            "flipped": row[8],
+            "candle_open": row[9],
+            "candle_close": row[10],
+            "ema_distance": decimal.Decimal(row[11]) if row[11] is not None else None,
+        }
+        for row in reversed(rows)
+    ]
+    return ema_states_list
+
+
+async def insert_ema_state_to_db(exchange: str, symbol: str, timeframe: str, close_time, ema_slow, ema_fast, bios: int, trend: str, flipped: bool, candle_open: str, candle_close: str, ema_distance: decimal) -> None:
+    """
+    Insert an EMAState record into the ema_state table.
+    """
+    sql = """
+    INSERT INTO ema_state (exchange, symbol, timeframe, close_time, ema_slow, ema_fast, bios, trend, flipped, candle_open, candle_close, ema_distance)
+    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+    """
+    with get_pg_conn() as conn, conn.cursor() as cur:
+        cur.execute(sql, (exchange, symbol, timeframe, close_time, ema_slow, ema_fast, bios, trend, flipped, candle_open, candle_close, ema_distance))

@@ -22,6 +22,8 @@ from orders.sl_manager import load_sl_configs
 
 import public_module
 
+from signals.ema_state import ema_state_initializer, calculate_ema_state
+
 Candle_SUBJECT = "candles.>"   
 Candle_STREAM = "STREAM_CANDLES"   
 
@@ -64,6 +66,9 @@ async def main():
         symbols = [str(s) for s in config_data.get("symbols", [])]
         timeframes = [str(t) for t in config_data.get("timeframes", [])]
 
+        timeframes_for_ema = [str(t) for t in config_data.get("timeframes_for_ema", [])]
+
+
         nc = NATS()
         await nc.connect(os.getenv("NATS_URL"), user=os.getenv("NATS_USER"), password=os.getenv("NATS_PASS"))
         await ensure_streams_from_yaml(nc, "streams.yaml")
@@ -83,6 +88,16 @@ async def main():
         open_sig_registry.bootstrap_from_db(DB_Conn) 
         open_count = open_sig_registry.get_count() 
         logger.info( json.dumps({ "EventCode": 0, "Message": f"open_sig_registry initialized. open_signals={open_count}" }) )
+
+
+        #------ initilizing ema_states buffer -------------
+        ema_state_count = ema_state_initializer("OANDA", symbols, timeframes, n=public_module.EMA_STATE_BUFFER_SIZE )
+        logger.info(    
+                    json.dumps({
+                            "EventCode": 0,
+                            "Message": f"EMA states buffer initialized. Count={ema_state_count}"
+                        })
+                )
 
         # --- Consumer 1: Tick Engine (receives NEW messages)
         try:
@@ -211,17 +226,9 @@ async def main():
                                 
                                 load_sl_configs()                          
                             
-                            if timeframe == "1m" or timeframe == "15m":
-                                try:
-
-                                    dq = buffers.CANDLE_BUFFER.get_or_create(key)
-
-                                    ema_fast = calc_ema_from_candles(dq, public_module.EMA_FAST)
-                                    ema_slow = calc_ema_from_candles(dq, public_module.EMA_SLOW)
-                                    logger.info(f"Calculated EMAs for {symbol} {timeframe}: EMA_{public_module.EMA_FAST} = {ema_fast}, EMA_{public_module.EMA_SLOW} = {ema_slow}")
-
-                                except Exception as e:
-                                    logger.error(f"Error calculating EMAs for {symbol} {timeframe}: {e}")
+                            if timeframe in timeframes_for_ema:
+                                dq = buffers.CANDLE_BUFFER.get_or_create(key)
+                                await calculate_ema_state(exchange, symbol, timeframe, dq, candle_data["open"], candle_data["close"], candle_data["close_time"])
 
                         #========== Main section, getting the candles we need ====================================
                         
