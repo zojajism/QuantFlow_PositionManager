@@ -64,6 +64,8 @@ async def calculate_ema_state(exchange: str, symbol: str, timeframe: str, candle
         ema_fast = calc_ema_from_candles(candles, public_module.EMA_FAST)
         ema_slow = calc_ema_from_candles(candles, public_module.EMA_SLOW)
        
+        bios = None
+
         if ema_fast == ema_slow:
             bios = 0
         elif ema_fast > ema_slow:
@@ -71,20 +73,51 @@ async def calculate_ema_state(exchange: str, symbol: str, timeframe: str, candle
         else:
             bios = -1
 
-        if open_price > ema_fast:
-            candle_open = "A"
-        elif open_price < ema_slow:
-            candle_open = "C"
-        elif open_price <= ema_fast and open_price >= ema_slow:
-            candle_open = "B"
+        if bios == 0:
+            if open_price > ema_slow:
+                candle_open = "A"
+            elif open_price == ema_slow:
+                candle_open = "B"
+            elif open_price < ema_slow:
+                candle_open = "C"
+            
+            if close_price > ema_slow:
+                candle_close = "A"
+            elif close_price == ema_slow:
+                candle_close = "B"
+            elif close_price < ema_slow:
+                candle_close = "C"
 
-        if close_price > ema_fast:
-            candle_close = "A"
-        elif close_price < ema_slow:
-            candle_close = "C"
-        elif close_price <= ema_fast and close_price >= ema_slow:
-            candle_close = "B"
+        if bios == 1:
+            if open_price > ema_fast:
+                candle_open = "A"
+            elif open_price < ema_slow:
+                candle_open = "C"
+            elif open_price <= ema_fast and open_price >= ema_slow:
+                candle_open = "B"
+
+            if close_price > ema_fast:
+                candle_close = "A"
+            elif close_price < ema_slow:
+                candle_close = "C"
+            elif close_price <= ema_fast and close_price >= ema_slow:
+                candle_close = "B"
         
+        if bios == -1:
+            if open_price < ema_fast:
+                candle_open = "A"
+            elif open_price > ema_slow:
+                candle_open = "C"
+            elif open_price >= ema_fast and open_price <= ema_slow:
+                candle_open = "B"
+
+            if close_price < ema_fast:
+                candle_close = "A"
+            elif close_price > ema_slow:
+                candle_close = "C"
+            elif close_price >= ema_fast and close_price <= ema_slow:
+                candle_close = "B"
+                
         #ema_distance = abs(ema_fast - ema_slow) / ema_slow * decimal.Decimal(100) if ema_slow != 0 else decimal.Decimal(0)
         ema_distance = abs(ema_fast - ema_slow) / public_module._pip_size(symbol)
 
